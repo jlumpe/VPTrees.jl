@@ -1,4 +1,16 @@
 """
+Check if should skip data point i, for skip arg which may be `nothing`.
+"""
+shouldskip(skip, i) = !isnothing(skip) && skip(i)
+
+filter_skipped!(skip, a) = deleteat!(a, findall(skip, axes(a, 1)))
+filter_skipped!(skip::Nothing, a) = a
+
+filter_skipped(skip, a) = [i for i in axes(a, 1) if !skip(i)]
+filter_skipped(skip::Nothing, a) = a
+
+
+"""
 Hamming distance between two bit strings (as integers)
 """
 function hamming(a::Integer, b::Integer)
@@ -14,8 +26,8 @@ euclidean(x, y) = sqrt(sum((x .- y).^2))
 """
 Brute-force implementation of find().
 """
-function find_bruteforce(data, metric, query, radius)
-    return findall(d -> metric(query, d) <= radius, data)
+function find_bruteforce(data, metric, query, radius, skip=nothing)
+    return [i for (i, d) in enumerate(data) if !shouldskip(skip, i) && metric(query, d) <= radius]
 end
 
 """
@@ -23,21 +35,20 @@ Brute-force implementation of find().
 
 Note - correct answer is only unambiguous if all distances are distinct
 (otherwise there may be a tie in choosing k-th closest data point)."""
-function find_nearest_bruteforce(data, metric, query, k)
+function find_nearest_bruteforce(data, metric, query, k, skip=nothing)
     dists = [metric(query, d) for d in data]
-    idxs = sortperm(dists)
-    return idxs[1:min(k, length(data))]
+    idxs = filter_skipped!(skip, sortperm(dists))
+    return idxs[1:min(k, end)]
 end
 
 """
 Brute-force implementation of find(), but return ties for k-th nearest-neighbor
 as separate set of results.
 """
-function find_nearest_bruteforce_ties(data, metric, query, k)
-    k = min(k, length(data))
-
+function find_nearest_bruteforce_ties(data, metric, query, k, skip=nothing)
     dists = [metric(query, d) for d in data]
-    idxs = sortperm(dists)
+    idxs = filter_skipped!(skip, sortperm(dists))
+    k = min(k, length(idxs))
 
     maxd = dists[idxs[k]]
 
@@ -55,17 +66,12 @@ function find_nearest_bruteforce_ties(data, metric, query, k)
 end
 
 """
-Check if two collections are the same up to ordering.
-"""
-seteq(a, b) = Set(a) == Set(b)
-
-"""
 Test that find() gives identical results to find_bruteforce().
 """
-function test_find(vptree, query, radius)
-    result = find(vptree, query, radius)
-    bfresult = find_bruteforce(vptree.data, vptree.metric, query, radius)
-    @test seteq(result, bfresult)
+function test_find(vptree, query, radius, skip=nothing)
+    result = find(vptree, query, radius, skip)
+    bfresult = find_bruteforce(vptree.data, vptree.metric, query, radius, skip)
+    @test issetequal(result, bfresult)
 end
 
 """
@@ -73,15 +79,18 @@ Test that find_nearest() gives identical results to find_nearest_bruteforce().
 
 This accounts for cases in which there is a tie for the k-th closest point.
 """
-function test_find_nearest(vptree, query, k)
-    result = find_nearest(vptree, query, k)
+function test_find_nearest(vptree, query, k, skip=nothing)
+    result = find_nearest(vptree, query, k, skip)
 
-    knn1, knn_ties = find_nearest_bruteforce_ties(vptree.data, vptree.metric, query, k)
+    knn1, knn_ties = find_nearest_bruteforce_ties(vptree.data, vptree.metric, query, k, skip)
 
-    @test length(result) == min(k, length(vptree.data))
     @test knn1 ⊆ result
     @test setdiff(result, knn1) ⊆ knn_ties
 end
+
+
+# Skip every 3rd data point
+skip3(i) = i % 3 == 0
 
 
 @testset "Tie for kth-nearest-neighbor" begin
@@ -117,10 +126,17 @@ end
     k = 6
 
     knn1, knn_ties = find_nearest_bruteforce_ties(data, metric, query, k)
-    @test seteq(knn1, 1:4)
-    @test seteq(knn_ties, 5:10)
+    @test issetequal(knn1, 1:4)
+    @test issetequal(knn_ties, 5:10)
 
     test_find_nearest(vptree, query, k)
+
+    # With skip arg
+    skip = skip3
+    knn1_s, knn_ties_s = find_nearest_bruteforce_ties(data, metric, query, k, skip)
+    @test issetequal(knn1_s, filter(i -> !skip(i), knn1))
+    @test issetequal(knn_ties_s, filter(i -> !skip(i), knn_ties))
+    test_find_nearest(vptree, query, k, skip)
 end
 
 @testset "Hamming distance" begin
@@ -135,8 +151,10 @@ end
     r = 2
 
     for query in queries
-        test_find(vptree, query, r)
-        test_find_nearest(vptree, query, k)
+        for skip in [nothing, skip3]
+            test_find(vptree, query, r)
+            test_find_nearest(vptree, query, k)
+        end
     end
 end
 
@@ -152,8 +170,10 @@ end
     r = .25
 
     for query in queries
-        test_find(vptree, query, r)
-        test_find_nearest(vptree, query, k)
+        for skip in [nothing, skip3]
+            test_find(vptree, query, r)
+            test_find_nearest(vptree, query, k)
+        end
     end
 end
 
@@ -169,8 +189,10 @@ end
     r = 3
 
     for query in queries
-        test_find(vptree, query, r)
-        test_find_nearest(vptree, query, k)
+        for skip in [nothing, skip3]
+            test_find(vptree, query, r)
+            test_find_nearest(vptree, query, k)
+        end
     end
 end
 
@@ -182,11 +204,11 @@ end
 
     vptree = VPTree(data, metric; threaded=true)
     @test [1] == find(vptree, UInt(3), 1)
-    @test seteq([1, 2], find(vptree, UInt(3), 2))
+    @test issetequal([1, 2], find(vptree, UInt(3), 2))
 
     vptree = VPTree(data, metric; threaded=false)
     @test [1] == find(vptree, UInt(3), 1)
-    @test seteq([1, 2], find(vptree, UInt(3), 2))
+    @test issetequal([1, 2], find(vptree, UInt(3), 2))
 end
 
 @testset "Construct invalid" begin
