@@ -6,6 +6,7 @@ version = "0.2.2"
 [deps]
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Requires = "ae029012-a4dd-5104-9daa-d747884805df"
 
 [compat]
 julia = "1.3"
@@ -13,6 +14,7 @@ julia = "1.3"
 [extras]
 StringDistances = "88034a9c-02f8-509d-84a9-84ec65e18404"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Neighborhood = "645ca80c-8b79-4109-87ea-e1f58159d116"
 
 [targets]
-test = ["Test", "StringDistances"]
+test = ["Test", "StringDistances", "Neighborhood"]

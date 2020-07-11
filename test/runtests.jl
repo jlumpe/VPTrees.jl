@@ -10,3 +10,4 @@ end
 
 
 @testset "VPTree" begin include("vptree.jl") end
+@testset "Neighborhood.jl API" begin include("neighborhood_api.jl") end
