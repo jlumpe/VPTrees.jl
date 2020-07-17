@@ -56,15 +56,15 @@ struct VPTree{InputType, MetricReturnType}
         @assert length(data) > 0 "Input data must contain at least one point."
         @assert !isempty(methods(metric)) "`metric` must be callable, was: $(metric)"
         MetricReturnType = typeof(metric(data[1], data[1]))
-        indexed_data = Random.shuffle!(collect(enumerate(data)))
-        root = threaded ? _construct_tree_rec_threaded!(indexed_data, metric, MetricReturnType) : _construct_tree_rec!(indexed_data, metric, MetricReturnType)
+        dataperm = Random.randperm(length(data))
+        root = threaded ? _construct_tree_rec_threaded!(data, dataperm, metric, MetricReturnType) : _construct_tree_rec!(data, dataperm, metric, MetricReturnType)
         new{InputType, MetricReturnType}(data, metric, root, MetricReturnType, threaded)
     end
 end
 
 function _check_threaded(threaded)
     if !isnothing(threaded) && threaded == true
-        if VERSION < v"1.3-DEV" 
+        if VERSION < v"1.3-DEV"
             @warn "incompatible julia version for `threaded=true`: $VERSION, requires >= v\"1.3\", setting `threaded=false`"
             threaded = false
         elseif Threads.nthreads() == 1
@@ -86,20 +86,19 @@ const SMALL_DATA = 1000
 
 @deprecate VPTree(data::Vector, metric::Function, MetricReturnType::DataType) VPTree(data::Vector, metric)
 
-function _construct_tree_rec_threaded!(data::AbstractVector{Tuple{Int, InputType}}, metric, MetricReturnType) where InputType
-    if isempty(data)
-        return nothing
-    end
+function _construct_tree_rec_threaded!(data::AbstractVector{InputType}, indices::AbstractVector{Int}, metric, MetricReturnType) where InputType
+    isempty(indices) && return nothing
 
-    n_data = length(data)
-    index, vantage_point = data[1]
+    n_data = length(indices)
+    index = indices[1]
+    vantage_point = data[index]
 
     if n_data == 1
         return Node(index, zero(MetricReturnType), zero(MetricReturnType), zero(MetricReturnType), n_data, nothing, nothing)
     end
 
-    rest = view(data, 2:length(data))
-    distances = [metric(d[2], vantage_point) for d in rest]
+    rest = @view indices[2:end]
+    distances = [metric(data[i], vantage_point) for i in rest]
     i_middle = div(n_data - 1, 2) + 1
     distance_order = sortperm(distances, alg=PartialQuickSort(i_middle))
     permute!(rest, distance_order)
@@ -107,53 +106,51 @@ function _construct_tree_rec_threaded!(data::AbstractVector{Tuple{Int, InputType
     min_dist, max_dist = extrema(distances)
     radius = distances[distance_order[i_middle]]
     left_rest = view(rest, 1:i_middle)
-    
+
     should_spawn = length(rest) > SMALL_DATA
     left_node = if should_spawn
-        Threads.@spawn _construct_tree_rec_threaded!(left_rest, metric, MetricReturnType)
+        Threads.@spawn _construct_tree_rec_threaded!(data, left_rest, metric, MetricReturnType)
     else
-        _construct_tree_rec!(left_rest, metric, MetricReturnType)
+        _construct_tree_rec!(data, left_rest, metric, MetricReturnType)
     end
-    
-    right_rest = view(rest, i_middle + 1:length(rest))
-    right_node = _construct_tree_rec_threaded!(right_rest, metric, MetricReturnType)
-    
+
+    right_rest = @view rest[(i_middle+1):end]
+    right_node = _construct_tree_rec_threaded!(data, right_rest, metric, MetricReturnType)
+
     if should_spawn
-        Node{MetricReturnType}(index, radius,  min_dist, max_dist, n_data, fetch(left_node), right_node)
-    else
-        Node{MetricReturnType}(index, radius,  min_dist, max_dist, n_data, left_node, right_node)
+        left_node = fetch(left_node)
     end
+
+    return Node{MetricReturnType}(index, radius, min_dist, max_dist, n_data, left_node, right_node)
 end
 
-function _construct_tree_rec!(data::AbstractVector{Tuple{Int, InputType}}, metric, MetricReturnType) where InputType
-    if isempty(data)
-        return nothing
-    end
+function _construct_tree_rec!(data::AbstractVector{InputType}, indices::AbstractVector{Int}, metric, MetricReturnType) where InputType
+    isempty(indices) && return nothing
 
-    n_data = length(data)
-    index, vantage_point = data[1]
+    n_data = length(indices)
+    index = indices[1]
+    vantage_point = data[index]
 
     if n_data == 1
         return Node(index, zero(MetricReturnType), zero(MetricReturnType), zero(MetricReturnType), n_data, nothing, nothing)
     end
 
-    rest = view(data, 2:length(data))
-    distances = [metric(d[2], vantage_point) for d in rest]
+    rest = @view indices[2:end]
+    distances = [metric(data[i], vantage_point) for i in rest]
     i_middle = div(n_data - 1, 2) + 1
     distance_order = sortperm(distances, alg=PartialQuickSort(i_middle))
     permute!(rest, distance_order)
 
     left_rest = view(rest, 1:i_middle)
+    left_node = _construct_tree_rec!(data, left_rest, metric, MetricReturnType)
 
-    left_node = _construct_tree_rec!(left_rest, metric, MetricReturnType)
-
-    right_rest = view(rest, i_middle + 1:length(rest))
-    right_node = _construct_tree_rec!(right_rest, metric, MetricReturnType)
+    right_rest = @view rest[(i_middle+1):end]
+    right_node = _construct_tree_rec!(data, right_rest, metric, MetricReturnType)
 
     min_dist, max_dist = extrema(distances)
     radius = distances[distance_order[i_middle]]
 
-    Node{MetricReturnType}(index, radius,  min_dist, max_dist, n_data, left_node, right_node)
+    return Node{MetricReturnType}(index, radius, min_dist, max_dist, n_data, left_node, right_node)
 end
 
 """
